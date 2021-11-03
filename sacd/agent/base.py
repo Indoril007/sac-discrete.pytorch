@@ -16,7 +16,7 @@ class BaseAgent(ABC):
                  target_entropy_ratio=0.98, start_steps=20000,
                  update_interval=4, target_update_interval=8000,
                  use_per=False, num_eval_steps=125000, max_episode_steps=27000,
-                 log_interval=10, eval_interval=1000, cuda=True, seed=0):
+                 log_interval=10, eval_interval=1000, cuda=0, seed=0):
         super().__init__()
         self.env = env
         self.test_env = test_env
@@ -30,7 +30,8 @@ class BaseAgent(ABC):
         # torch.backends.cudnn.benchmark = False  # It harms a performance.
 
         self.device = torch.device(
-            "cuda" if cuda and torch.cuda.is_available() else "cpu")
+            f"cuda:{cuda}" if (cuda >= 0) and torch.cuda.is_available()
+            else "cpu")
 
         # LazyMemory efficiently stores FrameStacked states.
         if use_per:
