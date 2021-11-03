@@ -10,17 +10,19 @@ class MultiStepBuff:
         self.maxlen = int(maxlen)
         self.reset()
 
-    def append(self, state, action, reward):
+    def append(self, state, action, reward, vector):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
+        self.vectors.append(vector)
 
     def get(self, gamma=0.99):
         assert len(self.rewards) > 0
         state = self.states.popleft()
         action = self.actions.popleft()
+        vector = self.vectors.popleft()
         reward = self._nstep_return(gamma)
-        return state, action, reward
+        return state, action, reward, vector
 
     def _nstep_return(self, gamma):
         r = np.sum([r * (gamma ** i) for i, r in enumerate(self.rewards)])
@@ -32,6 +34,7 @@ class MultiStepBuff:
         self.states = deque(maxlen=self.maxlen)
         self.actions = deque(maxlen=self.maxlen)
         self.rewards = deque(maxlen=self.maxlen)
+        self.vectors = deque(maxlen=self.maxlen)
 
     def is_empty(self):
         return len(self.rewards) == 0
@@ -56,6 +59,9 @@ class LazyMemory(dict):
         self['state'] = []
         self['next_state'] = []
 
+        self['state_vector'] = []
+        self['next_state_vector'] = []
+
         self['action'] = np.empty((self.capacity, 1), dtype=np.int64)
         self['reward'] = np.empty((self.capacity, 1), dtype=np.float32)
         self['done'] = np.empty((self.capacity, 1), dtype=np.float32)
@@ -64,12 +70,16 @@ class LazyMemory(dict):
         self._p = 0
 
     def append(self, state, action, reward, next_state, done,
-               episode_done=None):
-        self._append(state, action, reward, next_state, done)
+               state_vector, next_state_vector, episode_done=None):
+        self._append(state, action, reward, next_state, done, state_vector,
+                     next_state_vector)
 
-    def _append(self, state, action, reward, next_state, done):
+    def _append(self, state, action, reward, next_state, done,
+                state_vector, next_state_vector):
         self['state'].append(state)
         self['next_state'].append(next_state)
+        self['state_vector'].append(state_vector)
+        self['next_state_vector'].append(next_state_vector)
         self['action'][self._p] = action
         self['reward'][self._p] = reward
         self['done'][self._p] = done
@@ -84,6 +94,9 @@ class LazyMemory(dict):
             del self['state'][0]
             del self['next_state'][0]
 
+            del self['state_vector'][0]
+            del self['next_state_vector'][0]
+
     def sample(self, batch_size):
         indices = np.random.randint(low=0, high=len(self), size=batch_size)
         return self._sample(indices, batch_size)
@@ -96,10 +109,18 @@ class LazyMemory(dict):
         next_states = np.empty(
             (batch_size, *self.state_shape), dtype=np.uint8)
 
+        state_vectors = np.empty(
+            (batch_size, 128), dtype=np.float32)
+        next_state_vectors = np.empty(
+            (batch_size, 128), dtype=np.float32)
+
         for i, index in enumerate(indices):
             _index = np.mod(index+bias, self.capacity)
             states[i, ...] = self['state'][_index]
             next_states[i, ...] = self['next_state'][_index]
+
+            state_vectors[i, ...] = self['state_vector'][_index]
+            next_state_vectors[i, ...] = self['next_state_vector'][_index]
 
         states = torch.ByteTensor(states).to(self.device).float() / 255.
         next_states = torch.ByteTensor(
@@ -108,7 +129,10 @@ class LazyMemory(dict):
         rewards = torch.FloatTensor(self['reward'][indices]).to(self.device)
         dones = torch.FloatTensor(self['done'][indices]).to(self.device)
 
-        return states, actions, rewards, next_states, dones
+        state_vectors = torch.FloatTensor(state_vectors).to(self.device)
+        next_state_vectors = torch.FloatTensor(next_state_vectors).to(self.device)
+
+        return states, actions, rewards, next_states, dones, state_vectors, next_state_vectors
 
     def __len__(self):
         return self._n
@@ -126,17 +150,21 @@ class LazyMultiStepMemory(LazyMemory):
         if self.multi_step != 1:
             self.buff = MultiStepBuff(maxlen=self.multi_step)
 
-    def append(self, state, action, reward, next_state, done):
+    def append(self, state, action, reward, next_state, done, state_vector,
+               next_state_vector):
         if self.multi_step != 1:
-            self.buff.append(state, action, reward)
+            self.buff.append(state, action, reward, state_vector)
 
             if self.buff.is_full():
-                state, action, reward = self.buff.get(self.gamma)
-                self._append(state, action, reward, next_state, done)
+                state, action, reward, state_vector = self.buff.get(self.gamma)
+                self._append(state, action, reward, next_state, done,
+                             state_vector, next_state_vector)
 
             if done:
                 while not self.buff.is_empty():
-                    state, action, reward = self.buff.get(self.gamma)
-                    self._append(state, action, reward, next_state, done)
+                    state, action, reward, state_vector = self.buff.get(self.gamma)
+                    self._append(state, action, reward, next_state, done,
+                                 state_vector, next_state_vector)
         else:
-            self._append(state, action, reward, next_state, done)
+            self._append(state, action, reward, next_state, done,
+                         state_vector, next_state_vector)

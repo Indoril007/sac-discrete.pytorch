@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.distributions import Categorical
 
+CONV_OUTPUT = 1024
 
 def initialize_weights_he(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
@@ -13,7 +14,7 @@ def initialize_weights_he(m):
 
 class Flatten(nn.Module):
     def forward(self, x):
-        return x.view(x.size(0), -1)
+        return x.reshape(x.size(0), -1)
 
 
 class BaseNetwork(nn.Module):
@@ -54,25 +55,27 @@ class QNetwork(BaseNetwork):
 
         if not dueling_net:
             self.head = nn.Sequential(
-                nn.Linear(7 * 7 * 64, 512),
+                nn.Linear(CONV_OUTPUT + 128, 512),
                 nn.ReLU(inplace=True),
                 nn.Linear(512, num_actions))
         else:
             self.a_head = nn.Sequential(
-                nn.Linear(7 * 7 * 64, 512),
+                nn.Linear(CONV_OUTPUT + 128, 512),
                 nn.ReLU(inplace=True),
                 nn.Linear(512, num_actions))
             self.v_head = nn.Sequential(
-                nn.Linear(7 * 7 * 64, 512),
+                nn.Linear(CONV_OUTPUT + 128, 512),
                 nn.ReLU(inplace=True),
                 nn.Linear(512, 1))
 
         self.shared = shared
         self.dueling_net = dueling_net
 
-    def forward(self, states):
+    def forward(self, states, state_vectors):
         if not self.shared:
             states = self.conv(states)
+
+        states = torch.cat([states, state_vectors], dim=-1)
 
         if not self.dueling_net:
             return self.head(states)
@@ -89,9 +92,9 @@ class TwinnedQNetwork(BaseNetwork):
         self.Q1 = QNetwork(num_channels, num_actions, shared, dueling_net)
         self.Q2 = QNetwork(num_channels, num_actions, shared, dueling_net)
 
-    def forward(self, states):
-        q1 = self.Q1(states)
-        q2 = self.Q2(states)
+    def forward(self, states, state_vectors):
+        q1 = self.Q1(states, state_vectors)
+        q2 = self.Q2(states, state_vectors)
         return q1, q2
 
 
@@ -103,28 +106,30 @@ class CateoricalPolicy(BaseNetwork):
             self.conv = DQNBase(num_channels)
 
         self.head = nn.Sequential(
-            nn.Linear(7 * 7 * 64, 512),
+            nn.Linear(CONV_OUTPUT + 128, 512),
             nn.ReLU(inplace=True),
             nn.Linear(512, num_actions))
 
         self.shared = shared
 
-    def act(self, states):
+    def act(self, states, state_vectors):
         if not self.shared:
             states = self.conv(states)
 
+        states = torch.cat([states, state_vectors], dim=-1)
         action_logits = self.head(states)
         greedy_actions = torch.argmax(
             action_logits, dim=1, keepdim=True)
         return greedy_actions
 
-    def sample(self, states):
+    def sample(self, states, state_vectors):
         if not self.shared:
             states = self.conv(states)
 
+        states = torch.cat([states, state_vectors], dim=-1)
         action_probs = F.softmax(self.head(states), dim=1)
         action_dist = Categorical(action_probs)
-        actions = action_dist.sample().view(-1, 1)
+        actions = action_dist.sample().reshape(-1, 1)
 
         # Avoid numerical instability.
         z = (action_probs == 0.0).float() * 1e-8

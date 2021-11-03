@@ -53,35 +53,43 @@ class SacdAgent(BaseAgent):
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
 
-    def explore(self, state):
+    def explore(self, state, state_vector):
         # Act with randomness.
         state = torch.ByteTensor(
             state[None, ...]).to(self.device).float() / 255.
+        state_vector = torch.FloatTensor(
+            state_vector[None, ...]).to(self.device).float()
         with torch.no_grad():
-            action, _, _ = self.policy.sample(state)
+            action, _, _ = self.policy.sample(state, state_vector)
         return action.item()
 
-    def exploit(self, state):
+    def exploit(self, state, state_vector):
         # Act without randomness.
         state = torch.ByteTensor(
             state[None, ...]).to(self.device).float() / 255.
+        state_vector = torch.FloatTensor(
+            state_vector[None, ...]).to(self.device).float()
         with torch.no_grad():
-            action = self.policy.act(state)
+            action = self.policy.act(state, state_vector)
         return action.item()
 
     def update_target(self):
         self.target_critic.load_state_dict(self.online_critic.state_dict())
 
-    def calc_current_q(self, states, actions, rewards, next_states, dones):
-        curr_q1, curr_q2 = self.online_critic(states)
+    def calc_current_q(self, states, actions, rewards, next_states, dones,
+                       state_vectors, next_state_vectors):
+        curr_q1, curr_q2 = self.online_critic(states, state_vectors)
         curr_q1 = curr_q1.gather(1, actions.long())
         curr_q2 = curr_q2.gather(1, actions.long())
         return curr_q1, curr_q2
 
-    def calc_target_q(self, states, actions, rewards, next_states, dones):
+    def calc_target_q(self, states, actions, rewards, next_states, dones,
+                      state_vectors, next_state_vectors):
         with torch.no_grad():
-            _, action_probs, log_action_probs = self.policy.sample(next_states)
-            next_q1, next_q2 = self.target_critic(next_states)
+            _, action_probs, log_action_probs = self.policy.sample(next_states,
+                                                                   next_state_vectors)
+            next_q1, next_q2 = self.target_critic(next_states,
+                                                  next_state_vectors)
             next_q = (action_probs * (
                 torch.min(next_q1, next_q2) - self.alpha * log_action_probs
                 )).sum(dim=1, keepdim=True)
@@ -107,14 +115,22 @@ class SacdAgent(BaseAgent):
         return q1_loss, q2_loss, errors, mean_q1, mean_q2
 
     def calc_policy_loss(self, batch, weights):
-        states, actions, rewards, next_states, dones = batch
+        (states,
+         actions,
+         rewards,
+         next_states,
+         dones,
+         state_vectors,
+         next_state_vectors) = batch
 
         # (Log of) probabilities to calculate expectations of Q and entropies.
-        _, action_probs, log_action_probs = self.policy.sample(states)
+        _, action_probs, log_action_probs = self.policy.sample(states,
+                                                               state_vectors)
 
         with torch.no_grad():
             # Q for every actions to calculate expectations of Q.
-            q1, q2 = self.online_critic(states)
+            q1, q2 = self.online_critic(states,
+                                        state_vectors)
             q = torch.min(q1, q2)
 
         # Expectations of entropies.

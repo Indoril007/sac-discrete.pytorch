@@ -2,9 +2,12 @@ import os
 import yaml
 import argparse
 from datetime import datetime
+import gym
+import numpy as np
 
-from sacd.env import make_pytorch_env
+from sacd.env import make_pytorch_env, MineRLWrapper
 from sacd.agent import SacdAgent, SharedSacdAgent
+import minerl
 
 
 def run(args):
@@ -12,9 +15,16 @@ def run(args):
         config = yaml.load(f, Loader=yaml.SafeLoader)
 
     # Create environments.
-    env = make_pytorch_env(args.env_id, clip_rewards=False)
-    test_env = make_pytorch_env(
-        args.env_id, episode_life=False, clip_rewards=False)
+    # env = make_pytorch_env(args.env_id, clip_rewards=False)
+    # test_env = make_pytorch_env(
+    #     args.env_id, episode_life=False, clip_rewards=False)
+
+    action_centroids = np.load(os.path.join('./action_centroids.npy'))
+
+    env_name = "MineRLObtainIronPickaxeDenseVectorObf-v0"
+    test_env_name = "MineRLObtainIronPickaxeVectorObf-v0"
+    env = MineRLWrapper(gym.make(env_name), action_centroids=action_centroids)
+    test_env = MineRLWrapper(gym.make(test_env_name), action_centroids=action_centroids)
 
     # Specify the directory to log.
     name = args.config.split('/')[-1].rstrip('.yaml')
@@ -22,7 +32,7 @@ def run(args):
         name = 'shared-' + name
     time = datetime.now().strftime("%Y%m%d-%H%M")
     log_dir = os.path.join(
-        'logs', args.env_id, f'{name}-seed{args.seed}-{time}')
+        'logs', f'{name}-seed{args.seed}-{time}')
 
     # Create the agent.
     Agent = SacdAgent if not args.shared else SharedSacdAgent
@@ -37,7 +47,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--config', type=str, default=os.path.join('config', 'sacd.yaml'))
     parser.add_argument('--shared', action='store_true')
-    parser.add_argument('--env_id', type=str, default='MsPacmanNoFrameskip-v4')
+    # parser.add_argument('--env_id', type=str, default='MsPacmanNoFrameskip-v4')
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()

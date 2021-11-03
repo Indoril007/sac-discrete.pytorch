@@ -191,6 +191,52 @@ class WarpFramePyTorch(gym.ObservationWrapper):
         return frame[None, :, :]
 
 
+class MineRLWrapper(gym.Wrapper):
+    def __init__(self, env, action_centroids, n_frames=4):
+        gym.Wrapper.__init__(self, env)
+        self.action_centroids = action_centroids
+        self.n_frames = n_frames
+        self.frames = deque([], maxlen=n_frames)
+        self.last_obs_vector = None
+
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(3 * n_frames, 64, 64),
+            dtype=np.uint8)
+
+        self.action_space = spaces.Discrete(len(self.action_centroids))
+
+    def reset(self):
+        obs = self.env.reset()
+        self.last_obs_vector = np.concatenate(
+            [obs['vector'], np.zeros(64)],
+            axis=-1,
+        )
+        for _ in range(self.n_frames):
+            self.frames.append(
+                np.transpose(obs['pov'], (2, 0, 1))
+            )
+        return self._get_obs()
+
+    def step(self, action):
+        action_vector = self.action_centroids[action]
+        obs, reward, done, info = self.env.step({'vector': action_vector})
+        self.frames.append(
+            np.transpose(obs['pov'])
+        )
+        info['obs_vector'] = np.concatenate(
+            [obs['vector'], obs['vector'] - self.last_obs_vector[:64]],
+            axis=-1
+        )
+        self.last_obs_vector = info['obs_vector']
+        return self._get_obs(), reward, done, info
+
+    def _get_obs(self):
+        assert len(self.frames) == self.n_frames
+        return LazyFrames(list(self.frames))
+
+
 class FrameStackPyTorch(gym.Wrapper):
     def __init__(self, env, n_frames):
         """Stack n_frames last frames.

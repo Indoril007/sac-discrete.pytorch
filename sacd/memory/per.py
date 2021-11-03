@@ -29,7 +29,8 @@ class LazyPrioritizedMultiStepMemory(LazyMultiStepMemory):
     def _pa(self, p):
         return np.clip((p + self.eps) ** self.alpha, self.min_pa, self.max_pa)
 
-    def append(self, state, action, reward, next_state, done, p=None):
+    def append(self, state, action, reward, next_state, done, state_vector,
+               next_state_vector, p=None):
         # Calculate priority.
         if p is None:
             pa = self.max_pa
@@ -37,24 +38,29 @@ class LazyPrioritizedMultiStepMemory(LazyMultiStepMemory):
             pa = self._pa(p)
 
         if self.multi_step != 1:
-            self.buff.append(state, action, reward)
+            self.buff.append(state, action, reward, state_vector)
 
             if self.buff.is_full():
-                state, action, reward = self.buff.get(self.gamma)
-                self._append(state, action, reward, next_state, done, pa)
+                state, action, reward, state_vector = self.buff.get(self.gamma)
+                self._append(state, action, reward, next_state, done,
+                             state_vector, next_state_vector, pa)
 
             if done:
                 while not self.buff.is_empty():
-                    state, action, reward = self.buff.get(self.gamma)
-                    self._append(state, action, reward, next_state, done, pa)
+                    state, action, reward, state_vector = self.buff.get(self.gamma)
+                    self._append(state, action, reward, next_state, done,
+                                 state_vector, next_state_vector, pa)
         else:
-            self._append(state, action, reward, next_state, done, pa)
+            self._append(state, action, reward, next_state, done,
+                         state_vector, next_state_vector, pa)
 
-    def _append(self, state, action, reward, next_state, done, pa):
+    def _append(self, state, action, reward, next_state, done, state_vector,
+                next_state_vector, pa):
         # Store priority, which is done efficiently by SegmentTree.
         self.it_min[self._p] = pa
         self.it_sum[self._p] = pa
-        super()._append(state, action, reward, next_state, done)
+        super()._append(state, action, reward, next_state, done, state_vector,
+                        next_state_vector)
 
     def _sample_idxes(self, batch_size):
         total_pa = self.it_sum.sum(0, self._n)

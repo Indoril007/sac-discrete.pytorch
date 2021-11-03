@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import pickle
 
 from sacd.memory import LazyMultiStepMemory, LazyPrioritizedMultiStepMemory
 from sacd.utils import update_params, RunningMeanStats
@@ -40,10 +41,13 @@ class BaseAgent(ABC):
                 device=self.device, gamma=gamma, multi_step=multi_step,
                 beta_steps=beta_steps)
         else:
-            self.memory = LazyMultiStepMemory(
-                capacity=memory_size,
-                state_shape=self.env.observation_space.shape,
-                device=self.device, gamma=gamma, multi_step=multi_step)
+            # self.memory = LazyMultiStepMemory(
+            #     capacity=memory_size,
+            #     state_shape=self.env.observation_space.shape,
+            #     device=self.device, gamma=gamma, multi_step=multi_step)
+
+            with open('./memory.pkl', 'rb') as f:
+                self.memory = pickle.load(f)
 
         self.log_dir = log_dir
         self.model_dir = os.path.join(log_dir, 'model')
@@ -83,11 +87,11 @@ class BaseAgent(ABC):
             and self.steps >= self.start_steps
 
     @abstractmethod
-    def explore(self, state):
+    def explore(self, state, state_vector):
         pass
 
     @abstractmethod
-    def exploit(self, state):
+    def exploit(self, state, state_vector):
         pass
 
     @abstractmethod
@@ -95,11 +99,13 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def calc_current_q(self, states, actions, rewards, next_states, dones):
+    def calc_current_q(self, states, actions, rewards, next_states, dones,
+                       state_vectors, next_state_vectors):
         pass
 
     @abstractmethod
-    def calc_target_q(self, states, actions, rewards, next_states, dones):
+    def calc_target_q(self, states, actions, rewards, next_states, dones,
+                      state_vectors, next_state_vectors):
         pass
 
     @abstractmethod
@@ -121,26 +127,30 @@ class BaseAgent(ABC):
 
         done = False
         state = self.env.reset()
+        state_vector = self.env.last_obs_vector
 
         while (not done) and episode_steps <= self.max_episode_steps:
 
             if self.start_steps > self.steps:
                 action = self.env.action_space.sample()
             else:
-                action = self.explore(state)
+                action = self.explore(state, state_vector)
 
-            next_state, reward, done, _ = self.env.step(action)
+            next_state, reward, done, info = self.env.step(action)
+            next_state_vector = info['obs_vector']
 
             # Clip reward to [-1.0, 1.0].
-            clipped_reward = max(min(reward, 1.0), -1.0)
+            # clipped_reward = max(min(reward, 1.0), -1.0)
 
             # To calculate efficiently, set priority=max_priority here.
-            self.memory.append(state, action, clipped_reward, next_state, done)
+            self.memory.append(state, action, reward, next_state, done,
+                               state_vector, next_state_vector)
 
             self.steps += 1
             episode_steps += 1
             episode_return += reward
             state = next_state
+            state_vector = next_state_vector
 
             if self.is_update():
                 self.learn()
@@ -214,6 +224,9 @@ class BaseAgent(ABC):
             self.writer.add_scalar(
                 'stats/entropy', entropies.detach().mean().item(),
                 self.learning_steps)
+            self.writer.add_scalar(
+                'stats/buffer_size', len(self.memory),
+                self.learning_steps)
 
     def evaluate(self):
         num_episodes = 0
@@ -222,16 +235,19 @@ class BaseAgent(ABC):
 
         while True:
             state = self.test_env.reset()
+            state_vector = self.test_env.last_obs_vector
             episode_steps = 0
             episode_return = 0.0
             done = False
             while (not done) and episode_steps <= self.max_episode_steps:
-                action = self.exploit(state)
-                next_state, reward, done, _ = self.test_env.step(action)
+                action = self.exploit(state, state_vector)
+                next_state, reward, done, info = self.test_env.step(action)
+                next_state_vector = info['obs_vector']
                 num_steps += 1
                 episode_steps += 1
                 episode_return += reward
                 state = next_state
+                state_vector = next_state_vector
 
             num_episodes += 1
             total_return += episode_return
