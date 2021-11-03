@@ -49,6 +49,7 @@ class BaseAgent(ABC):
 
             with open('./memory.pkl', 'rb') as f:
                 self.memory = pickle.load(f)
+            self.memory.device = self.device
 
         self.log_dir = log_dir
         self.model_dir = os.path.join(log_dir, 'model')
