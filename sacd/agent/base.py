@@ -35,21 +35,28 @@ class BaseAgent(ABC):
 
         # LazyMemory efficiently stores FrameStacked states.
         if use_per:
-            beta_steps = (num_steps - start_steps) / update_interval
-            self.memory = LazyPrioritizedMultiStepMemory(
-                capacity=memory_size,
-                state_shape=self.env.observation_space.shape,
-                device=self.device, gamma=gamma, multi_step=multi_step,
-                beta_steps=beta_steps)
+            # beta_steps = (num_steps - start_steps) / update_interval
+            # self.memory = LazyPrioritizedMultiStepMemory(
+            #     capacity=memory_size,
+            #     state_shape=self.env.observation_space.shape,
+            #     device=self.device, gamma=gamma, multi_step=multi_step,
+            #     beta_steps=beta_steps)
+
+            with open('./per.pkl', 'rb') as f:
+                self.memory = pickle.load(f)
+            self.memory.device = self.device
+
         else:
             # self.memory = LazyMultiStepMemory(
             #     capacity=memory_size,
             #     state_shape=self.env.observation_space.shape,
             #     device=self.device, gamma=gamma, multi_step=multi_step)
 
-            with open('./memory.pkl', 'rb') as f:
-                self.memory = pickle.load(f)
-            self.memory.device = self.device
+            # with open('./memory.pkl', 'rb') as f:
+            #     self.memory = pickle.load(f)
+            # self.memory.device = self.device
+
+            pass
 
         self.log_dir = log_dir
         self.model_dir = os.path.join(log_dir, 'model')
